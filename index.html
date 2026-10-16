@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Flicker Light</title>
+  <link rel="manifest" href="manifest.json">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #000;
+      color: #eee;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: env(safe-area-inset-top) 1rem env(safe-area-inset-bottom);
+      transition: background 0.05s;
+    }
+    body.bright { background: #fff; color: #000; }
+    h1 { font-size: 1.4rem; margin-bottom: 1.5rem; font-weight: 500; }
+    .controls {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      width: 100%;
+      max-width: 320px;
+    }
+    button, select {
+      background: #222;
+      color: #eee;
+      border: 1px solid #444;
+      border-radius: 12px;
+      padding: 0.9rem 1rem;
+      font-size: 1rem;
+      width: 100%;
+    }
+    body.bright button, body.bright select { background: #eee; color: #111; border-color: #ccc; }
+    button.primary { background: #0a84ff; color: #fff; border: none; font-weight: 600; }
+    button:disabled { opacity: 0.4; }
+    .status { margin-top: 1.5rem; font-size: 0.85rem; opacity: 0.7; text-align: center; }
+    .warning { color: #ff9f0a; font-size: 0.8rem; margin-top: 1rem; text-align: center; max-width: 300px; }
+  </style>
+</head>
+<body>
+  <h1>Flicker Light</h1>
+  <div class="controls">
+    <select id="mode">
+      <option value="alpha">Alpha (8–12 Hz) — strong visuals</option>
+      <option value="theta">Theta (4–8 Hz) — dreamy</option>
+      <option value="mixed">Mixed progression (10 min)</option>
+      <option value="custom">Custom frequency</option>
+    </select>
+    <input type="range" id="freq" min="2" max="40" value="10" style="width:100%" hidden>
+    <div id="freqLabel" style="text-align:center;font-size:0.9rem" hidden>10 Hz</div>
+    <button id="start" class="primary">Start Session</button>
+    <button id="stop" disabled>Stop</button>
+  </div>
+  <div class="status" id="status">Ready</div>
+  <div class="warning">
+    Not for people with photosensitive epilepsy. Stop immediately if you feel unwell. Use in a dark room with eyes closed.
+  </div>
+
+  <script>
+    let stream, track, interval, running = false;
+    let useTorch = false;
+    const statusEl = document.getElementById('status');
+    const startBtn = document.getElementById('start');
+    const stopBtn = document.getElementById('stop');
+    const modeSel = document.getElementById('mode');
+    const freqSlider = document.getElementById('freq');
+    const freqLabel = document.getElementById('freqLabel');
+
+    modeSel.addEventListener('change', () => {
+      const custom = modeSel.value === 'custom';
+      freqSlider.hidden = !custom;
+      freqLabel.hidden = !custom;
+    });
+    freqSlider.addEventListener('input', () => {
+      freqLabel.textContent = freqSlider.value + ' Hz';
+    });
+
+    async function tryTorch() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' }
+        });
+        track = stream.getVideoTracks()[0];
+        const caps = track.getCapabilities?.() || {};
+        if (caps.torch) {
+          await track.applyConstraints({ advanced: [{ torch: true }] });
+          useTorch = true;
+          statusEl.textContent = 'Torch enabled';
+          return true;
+        }
+      } catch (e) {
+        console.log('Torch not available', e);
+      }
+      // cleanup
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      stream = null;
+      track = null;
+      return false;
+    }
+
+    async function setTorch(on) {
+      if (!track) return;
+      try {
+        await track.applyConstraints({ advanced: [{ torch: on }] });
+      } catch (e) {
+        console.log('Torch toggle failed', e);
+      }
+    }
+
+    function setScreen(on) {
+      document.body.classList.toggle('bright', on);
+    }
+
+    function pulse(freqHz) {
+      const period = 1000 / freqHz;
+      const onTime = period * 0.5;
+      let on = false;
+      return setInterval(() => {
+        on = !on;
+        if (useTorch) setTorch(on);
+        else setScreen(on);
+      }, onTime);
+    }
+
+    async function startSession() {
+      if (running) return;
+      startBtn.disabled = true;
+      statusEl.textContent = 'Requesting light…';
+
+      const torchOk = await tryTorch();
+      if (!torchOk) {
+        statusEl.textContent = 'Using screen brightness (torch unavailable)';
+        useTorch = false;
+      }
+
+      running = true;
+      stopBtn.disabled = false;
+      document.body.classList.add('bright');
+
+      const mode = modeSel.value;
+      if (mode === 'custom') {
+        interval = pulse(parseFloat(freqSlider.value));
+        statusEl.textContent = `Running ${freqSlider.value} Hz`;
+      } else if (mode === 'alpha') {
+        interval = pulse(10);
+        statusEl.textContent = 'Running ~10 Hz (alpha)';
+      } else if (mode === 'theta') {
+        interval = pulse(6);
+        statusEl.textContent = 'Running ~6 Hz (theta)';
+      } else {
+        // simple 10-min mixed progression
+        const sequence = [
+          { hz: 8, sec: 120 },
+          { hz: 10, sec: 180 },
+          { hz: 12, sec: 120 },
+          { hz: 9, sec: 180 }
+        ];
+        let idx = 0;
+        function next() {
+          if (!running || idx >= sequence.length) {
+            stopSession();
+            return;
+          }
+          const step = sequence[idx++];
+          clearInterval(interval);
+          interval = pulse(step.hz);
+          statusEl.textContent = `Step ${idx}: ${step.hz} Hz (${step.sec}s)`;
+          setTimeout(next, step.sec * 1000);
+        }
+        next();
+      }
+    }
+
+    function stopSession() {
+      running = false;
+      clearInterval(interval);
+      if (track) {
+        setTorch(false);
+        stream.getTracks().forEach(t => t.stop());
+      }
+      document.body.classList.remove('bright');
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      statusEl.textContent = 'Stopped';
+    }
+
+    startBtn.addEventListener('click', startSession);
+    stopBtn.addEventListener('click', stopSession);
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    }
+  </script>
+</body>
+</html>

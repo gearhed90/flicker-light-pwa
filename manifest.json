@@ -1,0 +1,10 @@
+{
+  "name": "Flicker Light",
+  "short_name": "Flicker",
+  "description": "Stroboscopic light sessions using your phone's flashlight",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#111111",
+  "orientation": "portrait"
+}
