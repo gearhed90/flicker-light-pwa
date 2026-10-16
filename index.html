@@ -131,9 +131,14 @@
       }, onTime);
     }
 
+    function delay(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
     async function startSession() {
       if (running) return;
       startBtn.disabled = true;
+      stopBtn.disabled = false;
       statusEl.textContent = 'Requesting light…';
 
       const torchOk = await tryTorch();
@@ -142,8 +147,16 @@
         useTorch = false;
       }
 
+      // 10-second countdown before flicker starts
+      for (let i = 10; i > 0; i--) {
+        if (!running && stopBtn.disabled) return; // stopped during countdown
+        statusEl.textContent = `Starting in ${i}s…`;
+        await delay(1000);
+      }
+
+      if (stopBtn.disabled) return; // stopped during countdown
+
       running = true;
-      stopBtn.disabled = false;
       document.body.classList.add('bright');
 
       const mode = modeSel.value;
